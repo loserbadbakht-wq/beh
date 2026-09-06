@@ -36,9 +36,10 @@ jobs:
 
       - name: Configure Git LFS to track ALL files (except .gitattributes)
         run: |
-          # Track everything – but exclude the .gitattributes file itself
-          git lfs track "*" --exclude=".gitattributes"
-          # If you have a .gitignore, you may also want to exclude it, but it's not required.
+          # Track everything with LFS
+          git lfs track "*"
+          # But .gitattributes itself must stay a normal Git file
+          echo ".gitattributes !filter !diff !merge text" >> .gitattributes
           git add .gitattributes
 
       - name: Copy extracted files to repo root
