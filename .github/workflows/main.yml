@@ -15,13 +15,12 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install dependencies (no-save)
+      - name: Install dependencies
         run: npm install --no-save @videojs/html esbuild
 
-      - name: Create temporary entry file
+      - name: Create entry file
         run: |
-          mkdir -p /tmp/videojs-entry
-          cat > /tmp/videojs-entry/player.js << 'EOF'
+          cat > player-entry.js << 'EOF'
           import '@videojs/html/video/player';
           import '@videojs/html/video/skin';
           EOF
@@ -29,12 +28,15 @@ jobs:
       - name: Bundle player into public/
         run: |
           mkdir -p public
-          npx esbuild /tmp/videojs-entry/player.js \
+          npx esbuild player-entry.js \
             --bundle \
             --format=esm \
             --minify \
             --sourcemap \
             --outfile=public/player.js
+
+      - name: Clean up entry file
+        run: rm -f player-entry.js
 
       - name: Commit and push public folder
         uses: stefanzweifel/git-auto-commit-action@v7
