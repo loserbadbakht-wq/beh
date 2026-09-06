@@ -1,20 +1,19 @@
 name: Update Video.js HTML
 
 on:
-  workflow_dispatch:          # Allows manual triggering from the Actions tab
+  workflow_dispatch:          
   push:
-    branches: [ main ]       # Runs automatically when pushing to main
 
 permissions:
-  contents: write            # Grants permission to push commits
+  contents: write            
 
 jobs:
-  update:
+  build:
+    name: Run
+    
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v7   # Using v7 as requested
-
+      - uses: actions/checkout@v7
       - name: Download and extract Video.js HTML
         run: |
           set -e
@@ -22,8 +21,7 @@ jobs:
           unzip -o videojs-html-10.0.0-beta.26.zip -d public/
           rm videojs-html-10.0.0-beta.26.zip
 
-      - name: Commit and push changes
-        uses: stefanzweifel/git-auto-commit-action@v7   # Using v7 as requested
+      - uses: stefanzweifel/git-auto-commit-action@v7   # Using v7 as requested
         with:
           commit_message: Update Video.js HTML to 10.0.0-beta.26
           file_pattern: public/**   # Only track changes inside public/
