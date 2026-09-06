@@ -1,3 +1,4 @@
+
 name: Download and Push All Files with Git LFS
 
 on:
@@ -7,7 +8,7 @@ jobs:
   update-files:
     runs-on: ubuntu-latest
     permissions:
-      contents: write   # Only this is required for pushing changes
+      contents: write   # Only permission needed
 
     steps:
       - name: Checkout repository
@@ -34,16 +35,29 @@ jobs:
             rmdir extracted/package
           fi
 
+      - name: Remove any .github folder from extracted contents
+        run: |
+          # Delete .github (if it exists) from the extracted directory
+          rm -rf extracted/.github 2>/dev/null || true
+
       - name: Configure Git LFS to track ALL files (except .gitattributes)
         run: |
           git lfs track "*"
           echo ".gitattributes !filter !diff !merge text" >> .gitattributes
           git add .gitattributes
 
-      - name: Copy extracted files to repo root (exclude .git, .github, and .gitattributes if needed)
+      - name: Copy extracted files to repo root (excluding .git and .github)
         run: |
+          # rsync with explicit excludes (--exclude works for top-level)
           rsync -av --exclude='.git' --exclude='.github' extracted/ ./
           rm -rf extracted package.tgz
+
+      - name: Revert any accidental changes to .github/workflows
+        run: |
+          # Discard any modifications to tracked workflow files
+          git checkout HEAD -- .github/workflows/ 2>/dev/null || true
+          # Remove any untracked files/folders under .github/workflows
+          git clean -fd .github/workflows/ 2>/dev/null || true
 
       - name: Commit and push all changes
         run: |
