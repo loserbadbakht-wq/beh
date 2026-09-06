@@ -16,12 +16,12 @@ jobs:
           node-version: '20'
 
       - name: Install @videojs/html
-        run: npm install --no-save @videojs/html
+        run: npm install --no-save @videojs/html@10.0.0-beta.31
 
       - name: Copy CDN files to public/videojs
         run: |
           mkdir -p public
-          cp -r node_modules/@videojs/html/cdn public/videojs
+          cp -r node_modules/@videojs/html@10.0.0-beta.31/cdn cdn/videojs
 
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v7
