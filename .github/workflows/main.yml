@@ -10,24 +10,47 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+
     steps:
+      # If you are certain checkout@v7 works, keep it; otherwise use v4.
       - uses: actions/checkout@v7
 
-      - name: Download and extract Video.js HTML
+      - name: Download and verify Video.js HTML
         run: |
           set -e
           URL="https://github.com/videojs/v10/archive/refs/tags/@videojs/utils@10.0.0-beta.32.zip"
-          curl -fLO "$URL"
-          # Verify it's a zip
+          echo "Downloading from: $URL"
+          curl -v -fLO "$URL"   # -v shows response headers, -f fails on HTTP errors
+
+          # Check file type and size
+          echo "File info:"
+          file videojs-html-*.zip
+          ls -lh videojs-html-*.zip
+
+          # Verify it's a real ZIP archive
           if ! file videojs-html-*.zip | grep -q "Zip archive"; then
-            echo "Downloaded file is not a ZIP archive!"
-            cat videojs-html-*.zip  # show error page
+            echo "ERROR: Downloaded file is NOT a ZIP archive!"
+            echo "Content of the file (first 10 lines):"
+            head -n 10 videojs-html-*.zip
             exit 1
           fi
+
+      - name: Extract to public/
+        run: |
+          mkdir -p public          # ensure destination exists
           unzip -o videojs-html-*.zip -d public/
           rm videojs-html-*.zip
 
-      - uses: stefanzweifel/git-auto-commit-action@v7
+          # Optionally, if the zip contains a single top-level folder,
+          # move its contents up to public/ (adjust as needed).
+          # Example: if the zip extracts to public/dist/ instead of public/ directly.
+          # Uncomment and adapt if needed.
+          # if [ -d "public/dist" ]; then
+          #   mv public/dist/* public/ && rmdir public/dist
+          # fi
+
+      - name: Commit changes
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: Update Video.js HTML to 10.0.0-beta.26
           file_pattern: public/**
