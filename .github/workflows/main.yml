@@ -16,7 +16,7 @@ jobs:
       - name: Download and extract Video.js HTML
         run: |
           set -e
-          URL="https://github.com/videojs/v10/releases/download/@videojs/html@10.0.0-beta.26/videojs-html-10.0.0-beta.26.zip"
+          URL="https://github.com/videojs/v10/archive/refs/tags/@videojs/utils@10.0.0-beta.32.zip"
           curl -fLO "$URL"
           # Verify it's a zip
           if ! file videojs-html-*.zip | grep -q "Zip archive"; then
