@@ -12,45 +12,68 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # If you are certain checkout@v7 works, keep it; otherwise use v4.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7   # keep as you have
 
-      - name: Download and verify Video.js HTML
+      # ----- 1. Download the source archive -----
+      - name: Download archive
         run: |
-          set -e
           URL="https://github.com/videojs/v10/archive/refs/tags/@videojs/utils@10.0.0-beta.32.zip"
           echo "Downloading from: $URL"
-          curl -v -fLO "$URL"   # -v shows response headers, -f fails on HTTP errors
+          curl --verbose --fail --location --output videojs-source.zip "$URL"
+          echo "Download completed."
 
-          # Check file type and size
-          echo "File info:"
-          file videojs-html-*.zip
-          ls -lh videojs-html-*.zip
-
-          # Verify it's a real ZIP archive
-          if ! file videojs-html-*.zip | grep -q "Zip archive"; then
-            echo "ERROR: Downloaded file is NOT a ZIP archive!"
-            echo "Content of the file (first 10 lines):"
-            head -n 10 videojs-html-*.zip
+      # ----- 2. Verify it's a real zip -----
+      - name: Verify zip
+        run: |
+          ls -lh videojs-source.zip
+          file videojs-source.zip
+          if ! file videojs-source.zip | grep -q "Zip archive"; then
+            echo "ERROR: Not a zip file! First 200 bytes:"
+            head -c 200 videojs-source.zip
             exit 1
           fi
 
-      - name: Extract to public/
+      # ----- 3. Test archive integrity -----
+      - name: Test zip
+        run: unzip -t videojs-source.zip
+
+      # ----- 4. Extract to a temporary directory -----
+      - name: Extract archive
         run: |
-          mkdir -p public          # ensure destination exists
-          unzip -o videojs-html-*.zip -d public/
-          rm videojs-html-*.zip
+          mkdir -p temp_extract
+          unzip -o videojs-source.zip -d temp_extract/
+          rm videojs-source.zip
 
-          # Optionally, if the zip contains a single top-level folder,
-          # move its contents up to public/ (adjust as needed).
-          # Example: if the zip extracts to public/dist/ instead of public/ directly.
-          # Uncomment and adapt if needed.
-          # if [ -d "public/dist" ]; then
-          #   mv public/dist/* public/ && rmdir public/dist
-          # fi
+      # ----- 5. Move contents to public/ -----
+      - name: Copy relevant files to public/
+        run: |
+          mkdir -p public
+          # The zip extracts to a single top-level folder (e.g., "v10-@videojs/utils@10.0.0-beta.32")
+          # We'll find that folder and copy its contents into public/.
+          EXTRACTED_DIR=$(ls -d temp_extract/*/ | head -n 1)
+          echo "Extracted directory: $EXTRACTED_DIR"
 
-      - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@v7
+          # Option A: If you want the entire repository contents in public/
+          # cp -r "$EXTRACTED_DIR"/* public/ || true
+
+          # Option B: If the built files are inside a subfolder (e.g., dist/ or build/)
+          # Check for common build output folders and copy those.
+          if [ -d "$EXTRACTED_DIR/dist" ]; then
+            echo "Found dist/ - copying its contents to public/"
+            cp -r "$EXTRACTED_DIR/dist"/* public/
+          elif [ -d "$EXTRACTED_DIR/build" ]; then
+            echo "Found build/ - copying its contents to public/"
+            cp -r "$EXTRACTED_DIR/build"/* public/
+          else
+            echo "No dist/ or build/ found. Copying entire repository root to public/"
+            cp -r "$EXTRACTED_DIR"/* public/
+          fi
+
+          # Clean up
+          rm -rf temp_extract
+
+      # ----- 6. Commit changes -----
+      - uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          commit_message: Update Video.js HTML to 10.0.0-beta.26
+          commit_message: Update Video.js HTML to 10.0.0-beta.32
           file_pattern: public/**
