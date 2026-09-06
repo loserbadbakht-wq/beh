@@ -1,1 +1,0 @@
-{"version":3,"file":"ro.js","names":["translations"],"sources":["../../src/cdn/locales/ro.ts"],"sourcesContent":["import { registerI18n } from '@videojs/html/cdn/i18n-registry';\nimport translations from '@videojs/core/i18n/locales/ro';\n\nregisterI18n('ro', translations);\n"],"mappings":"gFAGA,EAAa,KAAMA,CAAY"}

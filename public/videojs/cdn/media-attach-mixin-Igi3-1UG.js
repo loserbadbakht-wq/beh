@@ -1,2 +1,0 @@
-import{n as e,o as t}from"./context-C2rsoDxk.js";function n(e){return n=>{class r extends n{#e=null;#t=null;getMediaTarget(){return this}connectedCallback(){super.connectedCallback?.(),this.dispatchEvent(new t(e,this,(e,t)=>{t&&(this.#t=t),this.#e=e?.setMedia??null,this.isConnected&&this.#e?.(this.getMediaTarget())},!0))}disconnectedCallback(){this.#e?.(null),this.#t?.(),this.#t=null,this.#e=null,super.disconnectedCallback?.()}}return r}}const r=n(e);export{r as t};
-//# sourceMappingURL=media-attach-mixin-Igi3-1UG.js.map
