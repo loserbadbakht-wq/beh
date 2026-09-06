@@ -7,7 +7,7 @@ jobs:
   update-files:
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write   # Only this is required for pushing changes
 
     steps:
       - name: Checkout repository
@@ -36,15 +36,13 @@ jobs:
 
       - name: Configure Git LFS to track ALL files (except .gitattributes)
         run: |
-          # Track everything with LFS
           git lfs track "*"
-          # But .gitattributes itself must stay a normal Git file
           echo ".gitattributes !filter !diff !merge text" >> .gitattributes
           git add .gitattributes
 
-      - name: Copy extracted files to repo root
+      - name: Copy extracted files to repo root (exclude .git, .github, and .gitattributes if needed)
         run: |
-          rsync -av --exclude='.git' extracted/ ./
+          rsync -av --exclude='.git' --exclude='.github' extracted/ ./
           rm -rf extracted package.tgz
 
       - name: Commit and push all changes
