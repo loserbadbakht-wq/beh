@@ -15,16 +15,16 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Install @videojs/html
+      - name: Install @videojs/html@10.0.0-beta.31
         run: npm install --no-save @videojs/html@10.0.0-beta.31
 
       - name: Copy CDN files to public/videojs
         run: |
           mkdir -p public
-          cp -r node_modules/@videojs/html@10.0.0-beta.31/cdn cdn/videojs
+          cp -r node_modules/@videojs/html/cdn public/videojs
 
       - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          commit_message: 'Mirror Video.js CDN files'
+          commit_message: 'Mirror Video.js CDN files (v10.0.0-beta.31)'
           file_pattern: 'public/**'
