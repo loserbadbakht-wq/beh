@@ -1,0 +1,30 @@
+name: Mirror Video.js CDN
+
+on:
+  workflow_dispatch:
+
+jobs:
+  mirror-cdn:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install @videojs/html
+        run: npm install --no-save @videojs/html
+
+      - name: Copy CDN files to public/videojs
+        run: |
+          mkdir -p public
+          cp -r node_modules/@videojs/html/cdn public/videojs
+
+      - name: Commit and push changes
+        uses: stefanzweifel/git-auto-commit-action@v7
+        with:
+          commit_message: 'Mirror Video.js CDN files'
+          file_pattern: 'public/**'
