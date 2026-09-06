@@ -1,79 +1,43 @@
-name: beh
+name: Self-host Video.js player
 
 on:
   workflow_dispatch:
-  push:
-
-permissions:
-  contents: write
 
 jobs:
-  build:
+  build-and-commit:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v7   # keep as you have
+      - name: Checkout repository
+        uses: actions/checkout@v7
 
-      # ----- 1. Download the source archive -----
-      - name: Download archive
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies (no-save)
+        run: npm install --no-save @videojs/html esbuild
+
+      - name: Create temporary entry file
         run: |
-          URL="https://github.com/videojs/v10/archive/refs/tags/@videojs/utils@10.0.0-beta.32.zip"
-          echo "Downloading from: $URL"
-          curl --verbose --fail --location --output videojs-source.zip "$URL"
-          echo "Download completed."
+          mkdir -p /tmp/videojs-entry
+          cat > /tmp/videojs-entry/player.js << 'EOF'
+          import '@videojs/html/video/player';
+          import '@videojs/html/video/skin';
+          EOF
 
-      # ----- 2. Verify it's a real zip -----
-      - name: Verify zip
-        run: |
-          ls -lh videojs-source.zip
-          file videojs-source.zip
-          if ! file videojs-source.zip | grep -q "Zip archive"; then
-            echo "ERROR: Not a zip file! First 200 bytes:"
-            head -c 200 videojs-source.zip
-            exit 1
-          fi
-
-      # ----- 3. Test archive integrity -----
-      - name: Test zip
-        run: unzip -t videojs-source.zip
-
-      # ----- 4. Extract to a temporary directory -----
-      - name: Extract archive
-        run: |
-          mkdir -p temp_extract
-          unzip -o videojs-source.zip -d temp_extract/
-          rm videojs-source.zip
-
-      # ----- 5. Move contents to public/ -----
-      - name: Copy relevant files to public/
+      - name: Bundle player into public/
         run: |
           mkdir -p public
-          # The zip extracts to a single top-level folder (e.g., "v10-@videojs/utils@10.0.0-beta.32")
-          # We'll find that folder and copy its contents into public/.
-          EXTRACTED_DIR=$(ls -d temp_extract/*/ | head -n 1)
-          echo "Extracted directory: $EXTRACTED_DIR"
+          npx esbuild /tmp/videojs-entry/player.js \
+            --bundle \
+            --format=esm \
+            --minify \
+            --sourcemap \
+            --outfile=public/player.js
 
-          # Option A: If you want the entire repository contents in public/
-          # cp -r "$EXTRACTED_DIR"/* public/ || true
-
-          # Option B: If the built files are inside a subfolder (e.g., dist/ or build/)
-          # Check for common build output folders and copy those.
-          if [ -d "$EXTRACTED_DIR/dist" ]; then
-            echo "Found dist/ - copying its contents to public/"
-            cp -r "$EXTRACTED_DIR/dist"/* public/
-          elif [ -d "$EXTRACTED_DIR/build" ]; then
-            echo "Found build/ - copying its contents to public/"
-            cp -r "$EXTRACTED_DIR/build"/* public/
-          else
-            echo "No dist/ or build/ found. Copying entire repository root to public/"
-            cp -r "$EXTRACTED_DIR"/* public/
-          fi
-
-          # Clean up
-          rm -rf temp_extract
-
-      # ----- 6. Commit changes -----
-      - uses: stefanzweifel/git-auto-commit-action@v7
+      - name: Commit and push public folder
+        uses: stefanzweifel/git-auto-commit-action@v7
         with:
-          commit_message: Update Video.js HTML to 10.0.0-beta.32
-          file_pattern: public/**
+          commit_message: 'Update self-hosted player bundle'
+          file_pattern: 'public/*'
