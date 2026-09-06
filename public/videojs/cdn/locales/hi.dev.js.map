@@ -1,0 +1,1 @@
+{"version":3,"file":"hi.dev.js","names":["translations"],"sources":["../../src/cdn/locales/hi.ts"],"sourcesContent":["import { registerI18n } from '@videojs/html/cdn/i18n-registry';\nimport translations from '@videojs/core/i18n/locales/hi';\n\nregisterI18n('hi', translations);\n"],"mappings":";;;;AAGA,YAAA,CAAa,CAAA,EAAA,CAAA,CAAA,CAAMA,UAAY,CAAA"}

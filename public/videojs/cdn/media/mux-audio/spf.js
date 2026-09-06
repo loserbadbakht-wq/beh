@@ -1,0 +1,2 @@
+import{t as e}from"../../custom-media-element-8pSkwn42.js";import{i as t}from"../../context-C2rsoDxk.js";import{t as n}from"../../media-attach-mixin-Igi3-1UG.js";import{t as r}from"../../media-YTtOjoEw.js";import{t as i}from"../../mixin-ypVl8-O_.js";import{t as a}from"../../adapter-DaKW8NzI.js";const o=a(r),s=i(n(e(`audio`,class extends o{})));var c=class extends s{},l=class extends c{static{this.tagName=`mux-audio`}};t(l);export{l as MuxAudioElement};
+//# sourceMappingURL=spf.js.map

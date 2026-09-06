@@ -1,0 +1,2 @@
+import{a as e}from"./attributes-CwICYz98.js";function t(t,n){let r=Object.entries(n??{}).map(([t,n])=>` ${t}="${e(n)}"`).join(``);return`<media-text token="${e(t.key)}"${r}>${e(t.text)}</media-text>`}export{t};
+//# sourceMappingURL=render-text-BAPjZQ9r.js.map
