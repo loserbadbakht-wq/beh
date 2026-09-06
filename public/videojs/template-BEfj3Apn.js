@@ -1,2 +1,0 @@
-import{o as e,r as t}from"./attributes-CwICYz98.js";const n=[`autoplay`,`controls`,`controlslist`,`crossorigin`,`disablepictureinpicture`,`disableremoteplayback`,`loop`,`muted`,`playsinline`,`preload`];function r(r){return`<style> :host { position: relative; } video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: var(--media-object-fit, inherit); object-position: var(--media-object-position, 50% 50%); } </style><slot></slot><video${t(e(r,[...n]))}></video>`}export{r as t};
-//# sourceMappingURL=template-BEfj3Apn.js.map

@@ -1,2 +1,0 @@
-import{t as e}from"./media-element-Cp5PrNre.js";import{i as t}from"./context-C2rsoDxk.js";import{t as n}from"./container-element-Dd0ZCdhK.js";import{s as r,t as i}from"./create-player-D5WQ_jzZ.js";const{ProviderMixin:a}=i({features:r});var o=class extends a(e){static{this.tagName=`live-video-player`}};t(o),t(n);export{o as t};
-//# sourceMappingURL=player-BGAk4zHP.js.map
