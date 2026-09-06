@@ -1,1 +1,0 @@
-{"version":3,"file":"pl.js","names":["translations"],"sources":["../../src/cdn/locales/pl.ts"],"sourcesContent":["import { registerI18n } from '@videojs/html/cdn/i18n-registry';\nimport translations from '@videojs/core/i18n/locales/pl';\n\nregisterI18n('pl', translations);\n"],"mappings":"gFAGA,EAAA,KAAA,CAAA"}
