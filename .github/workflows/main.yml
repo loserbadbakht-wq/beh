@@ -1,27 +1,33 @@
 name: beh
 
 on:
-  workflow_dispatch:          
+  workflow_dispatch:
   push:
 
 permissions:
-  contents: write            
+  contents: write
 
 jobs:
   build:
-    name: Run
-    
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
       - name: Download and extract Video.js HTML
         run: |
           set -e
-          curl -LO https://github.com/videojs/v10/releases/download/@videojs/html@10.0.0-beta.26/videojs-html-10.0.0-beta.26.zip
-          unzip -o videojs-html-10.0.0-beta.26.zip -d public/
-          rm videojs-html-10.0.0-beta.26.zip
+          URL="https://github.com/videojs/v10/releases/download/@videojs/html@10.0.0-beta.26/videojs-html-10.0.0-beta.26.zip"
+          curl -fLO "$URL"
+          # Verify it's a zip
+          if ! file videojs-html-*.zip | grep -q "Zip archive"; then
+            echo "Downloaded file is not a ZIP archive!"
+            cat videojs-html-*.zip  # show error page
+            exit 1
+          fi
+          unzip -o videojs-html-*.zip -d public/
+          rm videojs-html-*.zip
 
-      - uses: stefanzweifel/git-auto-commit-action@v7   # Using v7 as requested
+      - uses: stefanzweifel/git-auto-commit-action@v7
         with:
           commit_message: Update Video.js HTML to 10.0.0-beta.26
-          file_pattern: public/**   # Only track changes inside public/
+          file_pattern: public/**
