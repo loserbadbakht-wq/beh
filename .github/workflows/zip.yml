@@ -1,0 +1,88 @@
+name: Download and Push Zip
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_url:
+        description: 'zip link'
+        required: true
+        type: string
+
+jobs:
+  download-and-push:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Download from MediaFire
+        id: dl
+        run: |
+          set -euo pipefail
+          URL="${{ inputs.zip_url }}"
+
+          # Extract the zip filename from the MediaFire URL
+          # e.g. https://www.mediafire.com/file/sq9d7khjhucyurf/example.zip/file?dkey=...
+          ZIP_NAME=$(echo "$URL" | grep -oP '/file/[^/]+/\K[^/?]+')
+          if [ -z "$ZIP_NAME" ]; then
+            echo "::error::Could not extract zip name from URL"
+            exit 1
+          fi
+          echo "zip_name=$ZIP_NAME" >> "$GITHUB_OUTPUT"
+          echo "Zip file will be: $ZIP_NAME"
+
+          # Fetch the MediaFire page to resolve the direct download URL
+          HTML=$(curl -sL -A "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36" "$URL")
+          DIRECT_URL=$(echo "$HTML" | grep -oP 'href="\Khttps://download[^"]+' | head -n 1 || true)
+
+          if [ -z "$DIRECT_URL" ]; then
+            echo "::error::Could not resolve direct download URL from MediaFire"
+            exit 1
+          fi
+          echo "Direct URL: $DIRECT_URL"
+
+          curl -L --fail -o "$ZIP_NAME" "$DIRECT_URL"
+          ls -lh "$ZIP_NAME"
+
+      - name: Unzip
+        id: unzip
+        run: |
+          set -euo pipefail
+          ZIP_NAME="${{ steps.dl.outputs.zip_name }}"
+          FOLDER_NAME="${ZIP_NAME%.zip}"
+          echo "folder_name=$FOLDER_NAME" >> "$GITHUB_OUTPUT"
+
+          mkdir -p "$FOLDER_NAME"
+          unzip -o "$ZIP_NAME" -d "$FOLDER_NAME"
+          rm -f "$ZIP_NAME"
+
+          ls -la "$FOLDER_NAME"
+
+      - name: Commit and push with Git LFS
+        run: |
+          set -euo pipefail
+          FOLDER_NAME="${{ steps.unzip.outputs.folder_name }}"
+
+          git lfs install
+
+          # Track everything inside the extracted folder with LFS
+          git lfs track "${FOLDER_NAME}/**"
+          git add .gitattributes
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -f "$FOLDER_NAME"
+
+          if git diff --cached --quiet; then
+            echo "Nothing to commit"
+            exit 0
+          fi
+
+          git commit -m "Add ${FOLDER_NAME} (via MediaFire)"
+          git push
