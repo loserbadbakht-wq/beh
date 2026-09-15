@@ -1,2 +1,3 @@
 * filter=lfs diff=lfs merge=lfs -text
 .gitattributes !filter !diff !merge text
+genshin-impact-where-mercy-endures-%5BM%5D/** filter=lfs diff=lfs merge=lfs -text
