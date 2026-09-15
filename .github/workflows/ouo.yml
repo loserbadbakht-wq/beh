@@ -29,7 +29,7 @@ jobs:
     - name: Run bypass script
       env:
         OUO_URL: ${{ inputs.ouo_url }}
-      run: python ./bypass.py
+      run: python bypass.py
 
     - name: Show result
       run: cat output.txt
