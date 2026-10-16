@@ -20,7 +20,7 @@ jobs:
         with:
           lfs: true
 
-      - name: Download file
+      - name: Resolve filename and download
         id: dl
         env:
           FILE_URL: ${{ inputs.file_url }}
@@ -30,24 +30,76 @@ jobs:
           echo "=== URL ==="
           echo "$FILE_URL"
 
-          # Extract filename from the URL path, ignoring query string
-          FILE_NAME=$(echo "$FILE_URL" | sed 's/[?#].*$//' | awk -F'/' '{print $NF}')
+          UA='Mozilla/5.0'
+
+          # --- 1. Probe the URL: follow redirects, capture final URL + headers ---
+          HEADERS=$(mktemp)
+          FINAL_URL=$(curl -sIL -A "$UA" -D "$HEADERS" -o /dev/null \
+                        -w '%{url_effective}' "$FILE_URL" || true)
+
+          echo "=== Final URL after redirects ==="
+          echo "$FINAL_URL"
+          echo "=== Response headers ==="
+          cat "$HEADERS" || true
+
+          # --- 2. Try Content-Disposition (this is where the real name lives) ---
+          CD=$(tr -d '\r' < "$HEADERS" | grep -i '^content-disposition:' | tail -n1 || true)
+          FILE_NAME=""
+
+          if [ -n "$CD" ]; then
+            # RFC 5987: filename*=UTF-8''encoded%20name.zip
+            FILE_NAME=$(printf '%s\n' "$CD" \
+              | sed -n "s/.*filename\*=\([^']*\)''\([^;]*\).*/\2/p" | head -n1)
+            if [ -n "$FILE_NAME" ]; then
+              # URL-decode percent escapes
+              FILE_NAME=$(printf '%b' "${FILE_NAME//%/\\x}")
+            fi
+
+            # Classic: filename="name.zip"
+            if [ -z "$FILE_NAME" ]; then
+              FILE_NAME=$(printf '%s\n' "$CD" \
+                | sed -n 's/.*filename="\([^"]*\)".*/\1/p' | head -n1)
+            fi
+
+            # Bare: filename=name.zip
+            if [ -z "$FILE_NAME" ]; then
+              FILE_NAME=$(printf '%s\n' "$CD" \
+                | sed -n 's/.*filename=\([^;]*\).*/\1/p' | head -n1 | tr -d '"')
+            fi
+          fi
+
+          # --- 3. Fall back to the *final* (post-redirect) URL path ---
           if [ -z "$FILE_NAME" ]; then
-            echo "::error::Could not determine filename from URL."
+            FILE_NAME=$(printf '%s\n' "$FINAL_URL" \
+              | sed 's/[?#].*$//' | awk -F'/' '{print $NF}')
+          fi
+
+          # --- 4. Fall back to the original URL path ---
+          if [ -z "$FILE_NAME" ]; then
+            FILE_NAME=$(printf '%s\n' "$FILE_URL" \
+              | sed 's/[?#].*$//' | awk -F'/' '{print $NF}')
+          fi
+
+          if [ -z "$FILE_NAME" ]; then
+            echo "::error::Could not determine filename from headers or URL."
             exit 1
           fi
-          echo "file_name=$FILE_NAME" >> "$GITHUB_OUTPUT"
-          echo "File will be: $FILE_NAME"
 
+          # Strip any path separators that snuck in via decoding
+          FILE_NAME=$(basename "$FILE_NAME")
+
+          echo "file_name=$FILE_NAME" >> "$GITHUB_OUTPUT"
+          echo "Resolved filename: $FILE_NAME"
+
+          # --- 5. Now download it ---
           curl -L --fail --retry 3 --retry-delay 5 \
-            -A 'Mozilla/5.0' \
+            -A "$UA" \
             -o "$FILE_NAME" \
             "$FILE_URL"
 
           ls -lh "$FILE_NAME"
           file "$FILE_NAME"
 
-          # Detect MIME type using `file --mime-type`
           MIME_TYPE=$(file --mime-type -b "$FILE_NAME")
           echo "mime_type=$MIME_TYPE" >> "$GITHUB_OUTPUT"
           echo "Detected MIME type: $MIME_TYPE"
@@ -59,26 +111,21 @@ jobs:
           FILE_NAME="${{ steps.dl.outputs.file_name }}"
           MIME_TYPE="${{ steps.dl.outputs.mime_type }}"
 
-          # Determine if the file is an archive we can extract
           IS_ARCHIVE=false
           case "$MIME_TYPE" in
             application/zip|application/x-zip-compressed|application/x-tar|application/gzip|application/x-gzip|application/x-bzip2|application/x-xz|application/x-7z-compressed|application/x-rar|application/x-compressed-tar|application/x-gtar)
-              IS_ARCHIVE=true
-              ;;
+              IS_ARCHIVE=true ;;
           esac
 
-          # Also detect by extension as a fallback
           if [ "$IS_ARCHIVE" = "false" ]; then
             case "${FILE_NAME,,}" in
               *.zip|*.tar|*.tar.gz|*.tgz|*.tar.bz2|*.tbz2|*.tar.xz|*.txz|*.gz|*.bz2|*.xz|*.7z|*.rar)
-                IS_ARCHIVE=true
-                ;;
+                IS_ARCHIVE=true ;;
             esac
           fi
 
           if [ "$IS_ARCHIVE" = "true" ]; then
             FOLDER_NAME="${FILE_NAME%.*}"
-            # Strip common double extensions like .tar.gz
             case "${FILE_NAME,,}" in
               *.tar.gz)  FOLDER_NAME="${FILE_NAME%.tar.gz}" ;;
               *.tar.bz2) FOLDER_NAME="${FILE_NAME%.tar.bz2}" ;;
@@ -90,36 +137,19 @@ jobs:
             mkdir -p "$FOLDER_NAME"
 
             case "${FILE_NAME,,}" in
-              *.zip)
-                unzip -o "$FILE_NAME" -d "$FOLDER_NAME"
-                ;;
-              *.tar.gz|*.tgz)
-                tar -xzf "$FILE_NAME" -C "$FOLDER_NAME"
-                ;;
-              *.tar.bz2|*.tbz2)
-                tar -xjf "$FILE_NAME" -C "$FOLDER_NAME"
-                ;;
-              *.tar.xz|*.txz)
-                tar -xJf "$FILE_NAME" -C "$FOLDER_NAME"
-                ;;
-              *.tar)
-                tar -xf "$FILE_NAME" -C "$FOLDER_NAME"
-                ;;
-              *.gz)
-                gunzip -c "$FILE_NAME" > "$FOLDER_NAME/$(basename "${FILE_NAME%.gz}")"
-                ;;
-              *.bz2)
-                bunzip2 -c "$FILE_NAME" > "$FOLDER_NAME/$(basename "${FILE_NAME%.bz2}")"
-                ;;
-              *.xz)
-                unxz -c "$FILE_NAME" > "$FOLDER_NAME/$(basename "${FILE_NAME%.xz}")"
-                ;;
-              7z|*.7z)
-                # try p7zip if available
+              *.zip)               unzip -o "$FILE_NAME" -d "$FOLDER_NAME" ;;
+              *.tar.gz|*.tgz)      tar -xzf "$FILE_NAME" -C "$FOLDER_NAME" ;;
+              *.tar.bz2|*.tbz2)    tar -xjf "$FILE_NAME" -C "$FOLDER_NAME" ;;
+              *.tar.xz|*.txz)      tar -xJf "$FILE_NAME" -C "$FOLDER_NAME" ;;
+              *.tar)               tar -xf  "$FILE_NAME" -C "$FOLDER_NAME" ;;
+              *.gz)                gunzip -c "$FILE_NAME" > "$FOLDER_NAME/$(basename "${FILE_NAME%.gz}")" ;;
+              *.bz2)               bunzip2 -c "$FILE_NAME" > "$FOLDER_NAME/$(basename "${FILE_NAME%.bz2}")" ;;
+              *.xz)                unxz -c "$FILE_NAME" > "$FOLDER_NAME/$(basename "${FILE_NAME%.xz}")" ;;
+              *.7z)
                 if command -v 7z >/dev/null 2>&1; then
                   7z x -o"$FOLDER_NAME" "$FILE_NAME"
                 else
-                  echo "::warning::7z extraction not available, keeping archive as-is."
+                  echo "::warning::7z not available; keeping archive."
                   rm -rf "$FOLDER_NAME"
                   echo "is_archive=false" >> "$GITHUB_OUTPUT"
                   echo "folder_name=" >> "$GITHUB_OUTPUT"
@@ -127,9 +157,8 @@ jobs:
                 fi
                 ;;
               *)
-                # Fallback: attempt unzip, else keep file
                 if ! unzip -o "$FILE_NAME" -d "$FOLDER_NAME"; then
-                  echo "::warning::Could not extract archive, keeping file as-is."
+                  echo "::warning::Could not extract; keeping file."
                   rm -rf "$FOLDER_NAME"
                   echo "is_archive=false" >> "$GITHUB_OUTPUT"
                   echo "folder_name=" >> "$GITHUB_OUTPUT"
@@ -139,7 +168,6 @@ jobs:
             esac
 
             rm -f "$FILE_NAME"
-
             echo "=== Extracted contents ==="
             ls -la "$FOLDER_NAME"
           else
