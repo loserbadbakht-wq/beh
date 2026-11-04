@@ -1,0 +1,190 @@
+name: Download iFunny Tag Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'iFunny tag to scrape (without #)'
+        required: false
+        default: 'trap'
+      max_images:
+        description: 'Max images to download'
+        required: false
+        default: '500'
+  schedule:
+    # Daily at 02:00 UTC. Keep this light; the CDN is unauthenticated but not unlimited.
+    - cron: '0 2 * * *'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ifunny-download
+  cancel-in-progress: false
+
+jobs:
+  download-and-push:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Ensure Git LFS tracks *.zip
+        run: |
+          git lfs install --local
+          if ! grep -qF '*.zip' .gitattributes 2>/dev/null; then
+            git lfs track "*.zip"
+            git add .gitattributes
+            git -c user.name="github-actions[bot]" \
+                -c user.email="github-actions[bot]@users.noreply.github.com" \
+                commit -m "chore: track *.zip with Git LFS"
+          fi
+
+      - name: Scrape tag and build archive
+        env:
+          TAG_NAME: ${{ github.event.inputs.tag || 'trap' }}
+          MAX_IMAGES: ${{ github.event.inputs.max_images || '500' }}
+          OUTPUT_ZIP: ifunny_tag_images.zip
+          TEMP_DIR: temp_images
+          # Images only by default. Add "mp4" to also pull videos from the tag.
+          ALLOWED_EXT: jpg,jpeg,png,webp
+          MAX_PAGES: '60'
+        run: |
+          cat > scrape.py <<'PY'
+          import os, re, sys, time, shutil, zipfile
+          import requests
+
+          TAG_NAME   = os.environ.get('TAG_NAME', 'trap')
+          MAX_IMAGES = int(os.environ.get('MAX_IMAGES', '500'))
+          OUTPUT_ZIP = os.environ.get('OUTPUT_ZIP', 'ifunny_tag_images.zip')
+          TEMP_DIR   = os.environ.get('TEMP_DIR', 'temp_images')
+          MAX_PAGES  = int(os.environ.get('MAX_PAGES', '60'))
+          ALLOWED    = [e.strip().lower() for e in
+                        os.environ.get('ALLOWED_EXT', 'jpg,jpeg,png,webp').split(',') if e.strip()]
+
+          HEADERS = {
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                            '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept-Language': 'en-US,en;q=0.9',
+          }
+
+          MEDIA_RE = re.compile(
+              r'https://img\.getfn\.io/(?:images|videos)/[a-f0-9]+_\d+\.(?:'
+              + '|'.join(ALLOWED) + r')',
+              re.IGNORECASE,
+          )
+
+          def fetch_page(page):
+              url = f'https://ifunny.co/tags/{TAG_NAME}'
+              if page > 1:
+                  url += f'?page={page}'
+              r = requests.get(url, headers=HEADERS, timeout=25)
+              r.raise_for_status()
+              return r.text
+
+          def download(url, dest, attempts=3):
+              for n in range(1, attempts + 1):
+                  try:
+                      with requests.get(url, headers=HEADERS, stream=True, timeout=30) as resp:
+                          resp.raise_for_status()
+                          with open(dest, 'wb') as f:
+                              for chunk in resp.iter_content(16384):
+                                  f.write(chunk)
+                      return True
+                  except Exception as e:
+                      if n == attempts:
+                          print(f'    gave up: {e}')
+                          return False
+                      time.sleep(2 * n)
+
+          def main():
+              os.makedirs(TEMP_DIR, exist_ok=True)
+              seen, seen_set = [], set()
+
+              for page in range(1, MAX_PAGES + 1):
+                  if len(seen) >= MAX_IMAGES:
+                      break
+                  try:
+                      html = fetch_page(page)
+                  except Exception as e:
+                      print(f'page {page}: fetch failed: {e}')
+                      break
+
+                  found = MEDIA_RE.findall(html)
+                  new = [u for u in dict.fromkeys(found) if u not in seen_set]
+                  print(f'page {page}: {len(found)} hits, {len(new)} new '
+                        f'(total {len(seen) + len(new)})')
+
+                  if not new:
+                      print('no new media -> stopping pagination')
+                      break
+
+                  seen.extend(new)
+                  seen_set.update(new)
+                  time.sleep(1)
+
+              urls = seen[:MAX_IMAGES]
+              print(f'\ndownloading {len(urls)} files from "{TAG_NAME}"')
+
+              ok = 0
+              for i, u in enumerate(urls, 1):
+                  ext = u.rsplit('.', 1)[-1].lower()
+                  dest = os.path.join(TEMP_DIR, f'media_{i:04d}.{ext}')
+                  if download(u, dest):
+                      ok += 1
+                  if i % 25 == 0:
+                      print(f'  {i}/{len(urls)} processed ({ok} ok)')
+
+              print(f'downloaded {ok}/{len(urls)}')
+
+              if ok == 0:
+                  print('nothing downloaded; no archive written')
+                  shutil.rmtree(TEMP_DIR, ignore_errors=True)
+                  return 0
+
+              print(f'writing {OUTPUT_ZIP}')
+              with zipfile.ZipFile(OUTPUT_ZIP, 'w', zipfile.ZIP_DEFLATED) as z:
+                  for root, _, files in os.walk(TEMP_DIR):
+                      for name in sorted(files):
+                          p = os.path.join(root, name)
+                          z.write(p, os.path.relpath(p, TEMP_DIR))
+
+              shutil.rmtree(TEMP_DIR, ignore_errors=True)
+              size_mb = os.path.getsize(OUTPUT_ZIP) / (1024 * 1024)
+              print(f'done: {OUTPUT_ZIP} ({size_mb:.1f} MB)')
+              return 0
+
+          if __name__ == '__main__':
+              sys.exit(main())
+          PY
+          python scrape.py
+
+      - name: Commit and push archive
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ -f ifunny_tag_images.zip ]; then
+            git add ifunny_tag_images.zip
+          fi
+
+          if git diff --cached --quiet; then
+            echo "No archive changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: update iFunny tag archive $(date -u +'%Y-%m-%d')"
+          git push origin "HEAD:${{ github.ref_name }}"
