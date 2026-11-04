@@ -11,8 +11,6 @@ on:
         description: 'Max images to download'
         required: false
         default: '500'
-  schedule:
-    - cron: '0 2 * * *'
 
 permissions:
   contents: write
