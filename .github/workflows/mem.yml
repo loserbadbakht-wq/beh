@@ -12,7 +12,6 @@ on:
         required: false
         default: '500'
   schedule:
-    # Daily at 02:00 UTC. Keep this light; the CDN is unauthenticated but not unlimited.
     - cron: '0 2 * * *'
 
 permissions:
@@ -25,7 +24,7 @@ concurrency:
 jobs:
   download-and-push:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
 
     steps:
       - name: Checkout repository
@@ -53,47 +52,56 @@ jobs:
                 commit -m "chore: track *.zip with Git LFS"
           fi
 
-      - name: Scrape tag and build archive
+      - name: Scrape tag via JSON feed and build archive
         env:
           TAG_NAME: ${{ github.event.inputs.tag || 'trap' }}
           MAX_IMAGES: ${{ github.event.inputs.max_images || '500' }}
           OUTPUT_ZIP: ifunny_tag_images.zip
           TEMP_DIR: temp_images
-          # Images only by default. Add "mp4" to also pull videos from the tag.
           ALLOWED_EXT: jpg,jpeg,png,webp
-          MAX_PAGES: '60'
+          MAX_PAGES: '120'
         run: |
           cat > scrape.py <<'PY'
-          import os, re, sys, time, shutil, zipfile
+          import os, sys, time, shutil, zipfile
           import requests
 
           TAG_NAME   = os.environ.get('TAG_NAME', 'trap')
           MAX_IMAGES = int(os.environ.get('MAX_IMAGES', '500'))
           OUTPUT_ZIP = os.environ.get('OUTPUT_ZIP', 'ifunny_tag_images.zip')
           TEMP_DIR   = os.environ.get('TEMP_DIR', 'temp_images')
-          MAX_PAGES  = int(os.environ.get('MAX_PAGES', '60'))
+          MAX_PAGES  = int(os.environ.get('MAX_PAGES', '120'))
           ALLOWED    = [e.strip().lower() for e in
                         os.environ.get('ALLOWED_EXT', 'jpg,jpeg,png,webp').split(',') if e.strip()]
+
+          BASE = f'https://ifunny.co/api/v1/feeds/tags/{TAG_NAME}'
 
           HEADERS = {
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
                             '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+              'Accept': 'application/json',
               'Accept-Language': 'en-US,en;q=0.9',
+              'Referer': f'https://ifunny.co/tags/{TAG_NAME}',
           }
 
-          MEDIA_RE = re.compile(
-              r'https://img\.getfn\.io/(?:images|videos)/[a-f0-9]+_\d+\.(?:'
-              + '|'.join(ALLOWED) + r')',
-              re.IGNORECASE,
-          )
-
-          def fetch_page(page):
-              url = f'https://ifunny.co/tags/{TAG_NAME}'
-              if page > 1:
-                  url += f'?page={page}'
-              r = requests.get(url, headers=HEADERS, timeout=25)
+          def fetch_feed(next_cursor=None):
+              params = {'filter': 'all'}
+              if next_cursor:
+                  params['next'] = next_cursor
+              r = requests.get(BASE, headers=HEADERS, params=params, timeout=30)
               r.raise_for_status()
-              return r.text
+              return r.json()
+
+          def extract_media(item):
+              # Prefer the direct media URL; fall back to the pic object
+              for key in ('url', 'pic.webp_url', 'pic.url'):
+                  val = item
+                  for part in key.split('.'):
+                      val = val.get(part) if isinstance(val, dict) else None
+                      if val is None:
+                          break
+                  if isinstance(val, str) and val.lower().rsplit('.', 1)[-1] in ALLOWED:
+                      return val
+              return None
 
           def download(url, dest, attempts=3):
               for n in range(1, attempts + 1):
@@ -112,31 +120,41 @@ jobs:
 
           def main():
               os.makedirs(TEMP_DIR, exist_ok=True)
-              seen, seen_set = [], set()
+              urls, seen = [], set()
+              cursor = None
 
               for page in range(1, MAX_PAGES + 1):
-                  if len(seen) >= MAX_IMAGES:
+                  if len(urls) >= MAX_IMAGES:
                       break
                   try:
-                      html = fetch_page(page)
+                      data = fetch_feed(cursor)
                   except Exception as e:
-                      print(f'page {page}: fetch failed: {e}')
+                      print(f'page {page}: feed fetch failed: {e}')
                       break
 
-                  found = MEDIA_RE.findall(html)
-                  new = [u for u in dict.fromkeys(found) if u not in seen_set]
-                  print(f'page {page}: {len(found)} hits, {len(new)} new '
-                        f'(total {len(seen) + len(new)})')
+                  items = data.get('items') or []
+                  new_urls = []
+                  for item in items:
+                      u = extract_media(item)
+                      if u and u not in seen:
+                          seen.add(u)
+                          new_urls.append(u)
 
-                  if not new:
+                  print(f'page {page}: {len(items)} items, {len(new_urls)} new media '
+                        f'(total {len(urls) + len(new_urls)})')
+
+                  if not new_urls:
                       print('no new media -> stopping pagination')
                       break
 
-                  seen.extend(new)
-                  seen_set.update(new)
+                  urls.extend(new_urls)
+                  cursor = (data.get('pagination') or {}).get('next')
+                  if not cursor:
+                      print('pagination.next is empty -> end of feed')
+                      break
                   time.sleep(1)
 
-              urls = seen[:MAX_IMAGES]
+              urls = urls[:MAX_IMAGES]
               print(f'\ndownloading {len(urls)} files from "{TAG_NAME}"')
 
               ok = 0
