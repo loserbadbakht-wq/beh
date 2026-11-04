@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'iFunny tag to scrape (without #)'
+        description: 'iFunny tag (without #)'
         required: false
         default: 'trap'
       max_images:
@@ -37,9 +37,18 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+          cache: 'pip'
+
+      - name: Cache Playwright browsers
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-linux-1
 
       - name: Install dependencies
-        run: pip install requests
+        run: |
+          pip install requests playwright
+          playwright install --with-deps chromium
 
       - name: Ensure Git LFS tracks *.zip
         run: |
@@ -52,137 +61,135 @@ jobs:
                 commit -m "chore: track *.zip with Git LFS"
           fi
 
-      - name: Scrape tag via JSON feed and build archive
+      - name: Scrape tag (headless scroll) and build archive
         env:
           TAG_NAME: ${{ github.event.inputs.tag || 'trap' }}
           MAX_IMAGES: ${{ github.event.inputs.max_images || '500' }}
           OUTPUT_ZIP: ifunny_tag_images.zip
           TEMP_DIR: temp_images
-          ALLOWED_EXT: jpg,jpeg,png,webp
-          MAX_PAGES: '120'
+          MAX_SCROLLS: '200'
         run: |
           cat > scrape.py <<'PY'
-          import os, sys, time, shutil, zipfile
+          import os, re, sys, time, shutil, zipfile
           import requests
+          from playwright.sync_api import sync_playwright
 
-          TAG_NAME   = os.environ.get('TAG_NAME', 'trap')
-          MAX_IMAGES = int(os.environ.get('MAX_IMAGES', '500'))
-          OUTPUT_ZIP = os.environ.get('OUTPUT_ZIP', 'ifunny_tag_images.zip')
-          TEMP_DIR   = os.environ.get('TEMP_DIR', 'temp_images')
-          MAX_PAGES  = int(os.environ.get('MAX_PAGES', '120'))
-          ALLOWED    = [e.strip().lower() for e in
-                        os.environ.get('ALLOWED_EXT', 'jpg,jpeg,png,webp').split(',') if e.strip()]
+          TAG         = os.environ.get('TAG_NAME', 'trap')
+          MAX_IMAGES  = int(os.environ.get('MAX_IMAGES', '500'))
+          OUTPUT_ZIP  = os.environ.get('OUTPUT_ZIP', 'ifunny_tag_images.zip')
+          TEMP_DIR    = os.environ.get('TEMP_DIR', 'temp_images')
+          MAX_SCROLLS = int(os.environ.get('MAX_SCROLLS', '200'))
+          STALL_LIMIT = 6
 
-          BASE = f'https://ifunny.co/api/v1/feeds/tags/{TAG_NAME}'
+          UA = ('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
+                '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
 
-          HEADERS = {
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 '
-                            '(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-              'Accept': 'application/json',
-              'Accept-Language': 'en-US,en;q=0.9',
-              'Referer': f'https://ifunny.co/tags/{TAG_NAME}',
+          # images only; add |mp4 inside the group to also grab videos
+          MEDIA_RE = re.compile(
+              r'https://img\.getfn\.io/(?:images|videos)/[a-f0-9]+_\d+\.(?:jpg|jpeg|png|webp)',
+              re.IGNORECASE)
+
+          COLLECT_JS = """
+          () => {
+            const out = [];
+            for (const el of document.querySelectorAll('img, video')) {
+              for (const attr of ['data-src', 'src']) {
+                const v = el.getAttribute(attr);
+                if (v && v.startsWith('https://img.getfn.io/')) out.push(v);
+              }
+            }
+            return out;
           }
+          """
 
-          def fetch_feed(next_cursor=None):
-              params = {'filter': 'all'}
-              if next_cursor:
-                  params['next'] = next_cursor
-              r = requests.get(BASE, headers=HEADERS, params=params, timeout=30)
-              r.raise_for_status()
-              return r.json()
-
-          def extract_media(item):
-              # Prefer the direct media URL; fall back to the pic object
-              for key in ('url', 'pic.webp_url', 'pic.url'):
-                  val = item
-                  for part in key.split('.'):
-                      val = val.get(part) if isinstance(val, dict) else None
-                      if val is None:
-                          break
-                  if isinstance(val, str) and val.lower().rsplit('.', 1)[-1] in ALLOWED:
-                      return val
-              return None
+          def collect(page, seen, ordered):
+              added = 0
+              for u in page.evaluate(COLLECT_JS):
+                  if u in seen or not MEDIA_RE.match(u):
+                      continue
+                  seen.add(u)
+                  ordered.append(u)
+                  added += 1
+              return added
 
           def download(url, dest, attempts=3):
+              headers = {'User-Agent': UA, 'Referer': 'https://ifunny.co/'}
               for n in range(1, attempts + 1):
                   try:
-                      with requests.get(url, headers=HEADERS, stream=True, timeout=30) as resp:
-                          resp.raise_for_status()
+                      with requests.get(url, headers=headers, stream=True, timeout=30) as r:
+                          r.raise_for_status()
                           with open(dest, 'wb') as f:
-                              for chunk in resp.iter_content(16384):
+                              for chunk in r.iter_content(16384):
                                   f.write(chunk)
                       return True
                   except Exception as e:
                       if n == attempts:
-                          print(f'    gave up: {e}')
+                          print('    give up: %s' % e)
                           return False
                       time.sleep(2 * n)
 
           def main():
               os.makedirs(TEMP_DIR, exist_ok=True)
-              urls, seen = [], set()
-              cursor = None
+              seen, ordered, stall = set(), [], 0
 
-              for page in range(1, MAX_PAGES + 1):
-                  if len(urls) >= MAX_IMAGES:
-                      break
-                  try:
-                      data = fetch_feed(cursor)
-                  except Exception as e:
-                      print(f'page {page}: feed fetch failed: {e}')
-                      break
+              with sync_playwright() as p:
+                  browser = p.chromium.launch(args=['--no-sandbox', '--disable-dev-shm-usage'])
+                  ctx = browser.new_context(
+                      user_agent=UA,
+                      viewport={'width': 1280, 'height': 1600},
+                      locale='en-US',
+                  )
+                  page = ctx.new_page()
+                  url = 'https://ifunny.co/tags/%s' % TAG
+                  print('opening %s' % url)
+                  page.goto(url, wait_until='domcontentloaded', timeout=90000)
+                  page.wait_for_timeout(4000)
 
-                  items = data.get('items') or []
-                  new_urls = []
-                  for item in items:
-                      u = extract_media(item)
-                      if u and u not in seen:
-                          seen.add(u)
-                          new_urls.append(u)
+                  for i in range(1, MAX_SCROLLS + 1):
+                      added = collect(page, seen, ordered)
+                      print('scroll %d: +%d (total %d)' % (i, added, len(ordered)))
+                      if len(ordered) >= MAX_IMAGES:
+                          print('reached target')
+                          break
+                      if added == 0:
+                          stall += 1
+                          if stall >= STALL_LIMIT:
+                              print('no new media for %d scrolls; stopping' % STALL_LIMIT)
+                              break
+                      else:
+                          stall = 0
+                      page.evaluate('window.scrollTo(0, document.body.scrollHeight)')
+                      page.wait_for_timeout(2000)
 
-                  print(f'page {page}: {len(items)} items, {len(new_urls)} new media '
-                        f'(total {len(urls) + len(new_urls)})')
+                  browser.close()
 
-                  if not new_urls:
-                      print('no new media -> stopping pagination')
-                      break
-
-                  urls.extend(new_urls)
-                  cursor = (data.get('pagination') or {}).get('next')
-                  if not cursor:
-                      print('pagination.next is empty -> end of feed')
-                      break
-                  time.sleep(1)
-
-              urls = urls[:MAX_IMAGES]
-              print(f'\ndownloading {len(urls)} files from "{TAG_NAME}"')
-
+              urls = ordered[:MAX_IMAGES]
+              print('\ndownloading %d files from tag "%s"' % (len(urls), TAG))
               ok = 0
               for i, u in enumerate(urls, 1):
                   ext = u.rsplit('.', 1)[-1].lower()
-                  dest = os.path.join(TEMP_DIR, f'media_{i:04d}.{ext}')
+                  dest = os.path.join(TEMP_DIR, 'media_%04d.%s' % (i, ext))
                   if download(u, dest):
                       ok += 1
-                  if i % 25 == 0:
-                      print(f'  {i}/{len(urls)} processed ({ok} ok)')
+                  if i % 50 == 0:
+                      print('  %d/%d (%d ok)' % (i, len(urls), ok))
 
-              print(f'downloaded {ok}/{len(urls)}')
-
+              print('downloaded %d/%d' % (ok, len(urls)))
               if ok == 0:
                   print('nothing downloaded; no archive written')
                   shutil.rmtree(TEMP_DIR, ignore_errors=True)
                   return 0
 
-              print(f'writing {OUTPUT_ZIP}')
+              print('writing %s' % OUTPUT_ZIP)
               with zipfile.ZipFile(OUTPUT_ZIP, 'w', zipfile.ZIP_DEFLATED) as z:
                   for root, _, files in os.walk(TEMP_DIR):
                       for name in sorted(files):
-                          p = os.path.join(root, name)
-                          z.write(p, os.path.relpath(p, TEMP_DIR))
+                          fp = os.path.join(root, name)
+                          z.write(fp, os.path.relpath(fp, TEMP_DIR))
 
               shutil.rmtree(TEMP_DIR, ignore_errors=True)
-              size_mb = os.path.getsize(OUTPUT_ZIP) / (1024 * 1024)
-              print(f'done: {OUTPUT_ZIP} ({size_mb:.1f} MB)')
+              size = os.path.getsize(OUTPUT_ZIP) / 1048576.0
+              print('done: %s (%.1f MB)' % (OUTPUT_ZIP, size))
               return 0
 
           if __name__ == '__main__':
